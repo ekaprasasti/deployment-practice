@@ -1,0 +1,85 @@
+version: "3.9"
+
+name: poc-deployment
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: ${PGPASSWORD:-postgres}
+      POSTGRES_USER: ${PGUSER:-postgres}
+      POSTGRES_DB: ${PGDATABASE:-appdb}
+    ports:
+      - "${PGPORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  api-blue:
+    build:
+      context: ./app
+    environment:
+      PORT: 3000
+      APP_VERSION: blue
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: ${PGUSER:-postgres}
+      PGPASSWORD: ${PGPASSWORD:-postgres}
+      PGDATABASE: ${PGDATABASE:-appdb}
+    depends_on:
+      - postgres
+    expose:
+      - "3000"
+    profiles: ["blue", "canary", "all"]
+
+  api-green:
+    build:
+      context: ./app
+    environment:
+      PORT: 3000
+      APP_VERSION: green
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: ${PGUSER:-postgres}
+      PGPASSWORD: ${PGPASSWORD:-postgres}
+      PGDATABASE: ${PGDATABASE:-appdb}
+    depends_on:
+      - postgres
+    expose:
+      - "3000"
+    profiles: ["green", "canary", "all"]
+
+  nginx-blue:
+    image: nginx:1.27-alpine
+    depends_on:
+      - api-blue
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/conf.d/blue.conf:/etc/nginx/conf.d/default.conf:ro
+    profiles: ["blue"]
+
+  nginx-green:
+    image: nginx:1.27-alpine
+    depends_on:
+      - api-green
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/conf.d/green.conf:/etc/nginx/conf.d/default.conf:ro
+    profiles: ["green"]
+
+  nginx-canary:
+    image: nginx:1.27-alpine
+    depends_on:
+      - api-blue
+      - api-green
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/conf.d/canary.conf:/etc/nginx/conf.d/default.conf:ro
+    profiles: ["canary"]
+
+volumes:
+  pgdata:
+
+
