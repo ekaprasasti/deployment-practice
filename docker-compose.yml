@@ -19,12 +19,12 @@ services:
       timeout: 3s
       retries: 10
 
-  api-blue:
+  api-current:
     build:
       context: ./app
     environment:
       PORT: 3000
-      APP_VERSION: blue
+      APP_VERSION: ${CURRENT_VERSION:-v1.0.0}
       PGHOST: postgres
       PGPORT: 5432
       PGUSER: ${PGUSER:-postgres}
@@ -35,7 +35,7 @@ services:
         condition: service_healthy
     expose:
       - "3000"
-    profiles: ["blue", "canary", "all"]
+    profiles: ["current", "canary", "all"]
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:3000/healthz || exit 1"]
       interval: 10s
@@ -45,12 +45,12 @@ services:
     restart: unless-stopped
     stop_grace_period: 10s
 
-  api-green:
+  api-next:
     build:
       context: ./app
     environment:
       PORT: 3000
-      APP_VERSION: green
+      APP_VERSION: ${NEXT_VERSION:-v1.1.0}
       PGHOST: postgres
       PGPORT: 5432
       PGUSER: ${PGUSER:-postgres}
@@ -61,7 +61,7 @@ services:
         condition: service_healthy
     expose:
       - "3000"
-    profiles: ["green", "canary", "all"]
+    profiles: ["next", "canary", "all"]
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:3000/healthz || exit 1"]
       interval: 10s
@@ -71,31 +71,31 @@ services:
     restart: unless-stopped
     stop_grace_period: 10s
 
-  nginx-blue:
+  nginx-current:
     image: nginx:1.27-alpine
     depends_on:
-      - api-blue
+      - api-current
     ports:
       - "8080:80"
     volumes:
-      - ./nginx/conf.d/blue.conf:/etc/nginx/conf.d/default.conf:ro
-    profiles: ["blue"]
+      - ./nginx/conf.d/current.conf:/etc/nginx/conf.d/default.conf:ro
+    profiles: ["current"]
 
-  nginx-green:
+  nginx-next:
     image: nginx:1.27-alpine
     depends_on:
-      - api-green
+      - api-next
     ports:
       - "8080:80"
     volumes:
-      - ./nginx/conf.d/green.conf:/etc/nginx/conf.d/default.conf:ro
-    profiles: ["green"]
+      - ./nginx/conf.d/next.conf:/etc/nginx/conf.d/default.conf:ro
+    profiles: ["next"]
 
   nginx-canary:
     image: nginx:1.27-alpine
     depends_on:
-      - api-blue
-      - api-green
+      - api-current
+      - api-next
     ports:
       - "8080:80"
     volumes:
