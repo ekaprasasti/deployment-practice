@@ -153,3 +153,99 @@ Tip umum:
 - Ukur setelah setiap langkah (latensi p95/p99, error rate, throughput).
 - Gunakan `/api/version` dan `/api/db-check` untuk smoke test cepat.
 - Selalu siapkan satu perintah rollback yang “muscle memory”.
+ 
+### Use case story 8 — Real case zero‑downtime deployment under load
+- **Aktor**: Release Engineer, SRE/On-call
+- **Tujuan**: Promosikan versi Green ke 100% tanpa downtime, di bawah beban riil, dengan rollback cepat bila perlu.
+- **Pra‑kondisi**: Branch `zero-downtime` dipakai; health/readiness aktif; `nginx-canary` sebagai satu‑satunya proxy.
+
+1) Start stack (proxy tunggal + dua versi app) dan build jika perlu
+```bash
+cd /Users/ekaprasasti/Documents/Projects/PoC/deployment
+docker compose --profile canary up -d --build
+```
+
+2) Verifikasi readiness kedua app sebelum menerima trafik
+```bash
+docker compose exec api-blue  wget -qO- http://localhost:3000/ready && echo
+docker compose exec api-green wget -qO- http://localhost:3000/ready && echo
+```
+
+3) Jalankan traffic generator sederhana (terminal terpisah)
+```bash
+# Kirim 5 req/detik, laporkan distribusi setiap ~5s
+while true; do for i in {1..25}; do curl -s http://localhost:8080/api/version | sed -n 's/.*"version":"\([^"]*\)".*/\1/p'; sleep 0.2; done; echo "----"; done |
+awk '/----/{print c; c=""; next} {c[$1]++}'
+```
+
+4) Baseline 100/0 (Blue penuh) – zero downtime via reload
+```nginx
+upstream api_main {
+    zone api_main 64k;
+    server api-blue:3000  weight=100 max_fails=3 fail_timeout=10s;
+    server api-green:3000 weight=0   max_fails=3 fail_timeout=10s;
+    keepalive 64;
+}
+```
+```bash
+docker compose exec nginx-canary nginx -s reload
+```
+Observasi: semua respon "blue"; error rate ~0; latency stabil.
+
+5) Ramp canary bertahap (observasi tiap tahap 2‑5 menit)
+```nginx
+# 95/5
+upstream api_main { zone api_main 64k; server api-blue:3000 weight=95 max_fails=3 fail_timeout=10s; server api-green:3000 weight=5  max_fails=3 fail_timeout=10s; keepalive 64; }
+# 90/10
+upstream api_main { zone api_main 64k; server api-blue:3000 weight=90 max_fails=3 fail_timeout=10s; server api-green:3000 weight=10 max_fails=3 fail_timeout=10s; keepalive 64; }
+# 70/30, 50/50, 0/100 …
+```
+```bash
+docker compose exec nginx-canary nginx -s reload
+```
+Pada tiap tahap:
+- Cek distribusi di terminal traffic generator.
+- Pantau health: `curl -fsS http://localhost:8080/api/version` berulang, dan `docker compose logs -f nginx-canary api-blue api-green`.
+- Validasikan KPI (error rate, p95). Jika melanggar, lakukan rollback ke bobot aman sebelumnya.
+
+6) Simulasi kegagalan parsial Green (lihat failover pasif Nginx)
+```bash
+docker compose stop api-green
+sleep 5
+# Distribusi kembali dominan Blue; error minimal karena proxy_next_upstream
+docker compose up -d api-green
+```
+
+7) Promosi penuh 0/100 (Green) – masih tanpa downtime
+```nginx
+upstream api_main {
+    zone api_main 64k;
+    server api-blue:3000  weight=0   max_fails=3 fail_timeout=10s;
+    server api-green:3000 weight=100 max_fails=3 fail_timeout=10s;
+    keepalive 64;
+}
+```
+```bash
+docker compose exec nginx-canary nginx -s reload
+```
+Opsional: setelah stabil, hentikan Blue untuk penghematan
+```bash
+docker compose stop api-blue
+```
+
+8) Rollback cepat (jika KPI memburuk)
+```nginx
+# Kembali ke 100/0 Blue
+upstream api_main { zone api_main 64k; server api-blue:3000 weight=100 max_fails=3 fail_timeout=10s; server api-green:3000 weight=0 max_fails=3 fail_timeout=10s; keepalive 64; }
+```
+```bash
+docker compose exec nginx-canary nginx -s reload
+```
+
+9) Catatan DB (expand–contract) – lakukan sebelum/selama canary rendah
+```bash
+docker compose exec postgres psql -U postgres -d appdb -c "CREATE TABLE IF NOT EXISTS demo_release(id serial primary key, note text);"
+# Pastikan kedua versi tetap lulus /ready dan tidak ada error query.
+```
+
+- **Exit criteria**: Distribusi 0/100 Green stabil ≥30 menit, error rate dalam ambang, KPI bisnis OK.
