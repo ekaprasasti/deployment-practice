@@ -40,13 +40,45 @@
   ```bash
   for i in {1..50}; do curl -s http://localhost:8080/api/version | jq -r .version; done | sort | uniq -c
   ```
-  3) Naikkan ke 70/30: edit `nginx/conf.d/canary.conf` lalu reload
+  3) Naikkan ke 70/30: edit `nginx/conf.d/canary.conf` lalu reload (dengan hardening upstream/keepalive)
   ```bash
   # ubah:
   # server api-blue:3000 weight=7;
   # server api-green:3000 weight=3;
   docker compose exec nginx-canary nginx -s reload
   ```
+### Use case story 7 — Blue→Green zero‑downtime via Nginx reload
+- Gunakan satu proxy `nginx-canary` sebagai traffic switcher.
+1) Start proxy tunggal dan kedua app
+```bash
+docker compose --profile canary up -d
+```
+2) Set 100/0 (Blue penuh) pada `nginx/conf.d/canary.conf` lalu reload
+```nginx
+upstream api_main {
+    zone api_main 64k;
+    server api-blue:3000 weight=10 max_fails=3 fail_timeout=10s;
+    server api-green:3000 weight=0  max_fails=3 fail_timeout=10s;
+    keepalive 64;
+}
+```
+```bash
+docker compose exec nginx-canary nginx -s reload
+curl -s http://localhost:8080/api/version
+```
+3) Promosikan ke 0/100 (Green penuh) hanya dengan edit weight + reload
+```nginx
+upstream api_main {
+    zone api_main 64k;
+    server api-blue:3000 weight=0  max_fails=3 fail_timeout=10s;
+    server api-green:3000 weight=10 max_fails=3 fail_timeout=10s;
+    keepalive 64;
+}
+```
+```bash
+docker compose exec nginx-canary nginx -s reload
+curl -s http://localhost:8080/api/version
+```
   4) Promosi 100% Green
   ```bash
   docker compose stop nginx-canary api-blue

@@ -13,6 +13,11 @@ services:
       - "${PGPORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB -h localhost"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   api-blue:
     build:
@@ -26,10 +31,19 @@ services:
       PGPASSWORD: ${PGPASSWORD:-postgres}
       PGDATABASE: ${PGDATABASE:-appdb}
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     expose:
       - "3000"
     profiles: ["blue", "canary", "all"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    stop_grace_period: 10s
 
   api-green:
     build:
@@ -43,10 +57,19 @@ services:
       PGPASSWORD: ${PGPASSWORD:-postgres}
       PGDATABASE: ${PGDATABASE:-appdb}
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     expose:
       - "3000"
     profiles: ["green", "canary", "all"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    stop_grace_period: 10s
 
   nginx-blue:
     image: nginx:1.27-alpine

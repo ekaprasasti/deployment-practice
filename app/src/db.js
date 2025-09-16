@@ -21,6 +21,14 @@ export async function checkConnection() {
   return result.rows[0].ok === 1;
 }
 
+export async function closePool() {
+  try {
+    await pool.end();
+  } catch (error) {
+    // swallow errors on shutdown
+  }
+}
+
 export default pool;
 
 
